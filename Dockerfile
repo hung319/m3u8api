@@ -1,18 +1,20 @@
-# 1. Chọn base image
-FROM node:20
+# 1. Base image
+FROM node:20-slim
 
-# 2. Tạo thư mục app
+# 2. Set working directory
 WORKDIR /usr/src/app
 
-# 3. Copy source code
+# 3. Copy package.json và package-lock.json (nếu có)
 COPY package*.json ./
-COPY index.js .
 
-# 4. Cài đặt các thư viện cần thiết
+# 4. Cài đặt dependencies
 RUN npm install
 
-# 5. Mở cổng server
+# 5. Copy toàn bộ source code vào image
+COPY . .
+
+# 6. Expose port server (3000)
 EXPOSE 3000
 
-# 6. Lệnh để start server
-CMD ["node", "index.js"]
+# 7. Command chạy app
+CMD ["node", "app.js"]
