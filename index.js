@@ -9,6 +9,7 @@ const PORT = 3000;
 app.use('/animet', animetRoutes);
 app.use('/anime47', anime47Routes);
 
+const hostname = '0.0.0.0';
 app.listen(PORT, () => {
     console.log(`Mahiro server đã sẵn sàng phục vụ Yuu Onii-chan ở http://localhost:${PORT} rồi nè UwU`);
 });
