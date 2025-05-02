@@ -156,4 +156,4 @@ router.get('/files/:filename', async (req, res) => {
 });
 
 // --- GIỮ LẠI DÒNG NÀY Ở CUỐI TỆP ---
-// module.exports = router;
+module.exports = router;
