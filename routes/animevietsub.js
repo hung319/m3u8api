@@ -1,31 +1,36 @@
-const http = require('http');
+const express = require('express');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const fs = require('fs');
+const fsp = fs.promises; // Sử dụng promises API của fs cho async/await
 const path = require('path');
 const { Buffer } = require('buffer');
 
-// --- CẤU HÌNH ---
-const PORT = 3000; // Cổng server sẽ lắng nghe
-const TEMP_DIR_NAME = 'temp_m3u8'; // Tên thư mục lưu file m3u8 tạm
-const TEMP_DIR_PATH = path.join(__dirname, TEMP_DIR_NAME);
-const FILE_EXPIRATION_MS = 12 * 60 * 60 * 1000; // 12 giờ tính bằng mili giây
-const BASE_URL = `http://localhost:${PORT}`; // THAY localhost bằng IP/Domain nếu cần truy cập từ xa
+const router = express.Router();
 
-// Tạo thư mục tạm nếu chưa tồn tại
+// --- CẤU HÌNH ---
+const TEMP_DIR_NAME = 'temp_m3u8'; // Tên thư mục lưu file m3u8 tạm
+const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME); // Đường dẫn thư mục tạm (lùi 1 cấp từ routes)
+const FILE_EXPIRATION_MS = 12 * 60 * 60 * 1000; // 12 giờ
+// BASE_URL sẽ được tạo động dựa trên request
+
+// --- KIỂM TRA VÀ TẠO THƯ MỤC TẠM KHI MODULE ĐƯỢC LOAD ---
 if (!fs.existsSync(TEMP_DIR_PATH)) {
     try {
         fs.mkdirSync(TEMP_DIR_PATH);
-        console.log(`Đã tạo thư mục tạm: ${TEMP_DIR_PATH}`);
+        console.log(`[AnimeVietsub Route] Đã tự động tạo thư mục tạm: ${TEMP_DIR_PATH}`);
     } catch (err) {
-        console.error(`Lỗi khi tạo thư mục tạm: ${err}`);
-        process.exit(1); // Thoát nếu không tạo được thư mục
+        console.error(`[AnimeVietsub Route] Lỗi nghiêm trọng: Không thể tạo thư mục tạm tại ${TEMP_DIR_PATH}. Lỗi: ${err}`);
+        // Có thể ném lỗi hoặc xử lý khác tùy thuộc vào yêu cầu ứng dụng
+        process.exit(1);
     }
+} else {
+     console.log(`[AnimeVietsub Route] Thư mục tạm đã tồn tại: ${TEMP_DIR_PATH}`);
 }
 
 // Khóa gốc (Base64 encoded)
 const key_string_b64 = "ZG1fdGhhbmdfc3VjX3ZhdF9nZXRfbGlua19hbl9kYnQ=";
-let aes_key_bytes = null; // Sẽ được tính một lần khi server khởi động
+let aes_key_bytes = null; // Sẽ được tính một lần khi cần
 
 // --- HÀM GIẢI MÃ ---
 function decryptAndDecompress(encrypted_data_string_b64) {
@@ -36,9 +41,9 @@ function decryptAndDecompress(encrypted_data_string_b64) {
             const sha256Hasher = crypto.createHash('sha256');
             sha256Hasher.update(decoded_key_bytes);
             aes_key_bytes = sha256Hasher.digest();
-            console.log('Khóa AES đã được tính toán sẵn sàng.');
+            console.log('[AnimeVietsub Route] Khóa AES đã được tính toán.');
         } catch(e) {
-            console.error('Không thể tính toán khóa AES:', e);
+            console.error('[AnimeVietsub Route] Không thể tính toán khóa AES:', e);
             throw new Error('Lỗi cấu hình khóa AES.');
         }
     }
@@ -61,121 +66,96 @@ function decryptAndDecompress(encrypted_data_string_b64) {
         return m3u8_content;
 
     } catch (error) {
-        console.error("\nLỗi trong quá trình giải mã/giải nén:", error.message);
-        console.error("Dữ liệu đầu vào (đã làm sạch, 50 ký tự đầu):", cleaned_encdata_b64.substring(0, 50) + "...");
+        console.error("\n[AnimeVietsub Route] Lỗi giải mã/giải nén:", error.message);
+        console.error("[AnimeVietsub Route] Dữ liệu đầu vào (50 ký tự đầu):", cleaned_encdata_b64.substring(0, 50) + "...");
         throw new Error(`Giải mã thất bại: ${error.message}`);
     }
 }
 
-// --- HÀM XỬ LÝ REQUEST ---
-const requestHandler = (req, res) => {
-    // Xử lý yêu cầu POST đến /decrypt
-    if (req.method === 'POST' && req.url === '/decrypt') {
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', () => {
-            console.log(`\nNhận POST /decrypt lúc ${new Date().toISOString()}`);
-            if (!body) {
-                res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-                res.end('Lỗi: Không có dữ liệu trong body.');
-                return;
-            }
+// --- ĐỊNH NGHĨA ROUTES ---
 
-            try {
-                const m3u8Content = decryptAndDecompress(body);
-                const randomFilename = `${crypto.randomBytes(16).toString('hex')}.m3u8`;
-                const filePath = path.join(TEMP_DIR_PATH, randomFilename);
-                const publicUrl = `${BASE_URL}/files/${randomFilename}`; // URL trả về cho người dùng
+// Middleware để đọc request body dạng text/plain
+router.use(express.text({ type: '*/*' })); // Chấp nhận mọi content type làm text
 
-                fs.writeFile(filePath, m3u8Content, 'utf8', (err) => {
-                    if (err) {
-                        console.error("Lỗi khi lưu file M3U8:", err);
-                        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-                        res.end('Lỗi Server: Không thể lưu file.');
-                        return;
-                    }
+// Route POST để giải mã
+router.post('/decrypt', async (req, res) => {
+    console.log(`\n[AnimeVietsub Route] Nhận POST /decrypt lúc ${new Date().toISOString()}`);
+    const encryptedDataString = req.body; // Lấy dữ liệu từ body request
 
-                    console.log(`Đã giải mã thành công, lưu vào: ${filePath}`);
-                    console.log(`URL trả về: ${publicUrl}`);
-
-                    // Lên lịch xóa file sau 12 giờ
-                    setTimeout(() => {
-                        fs.unlink(filePath, (unlinkErr) => {
-                            if (unlinkErr) {
-                                console.error(`Lỗi khi tự động xóa file ${filePath}:`, unlinkErr);
-                            } else {
-                                console.log(`Đã tự động xóa file hết hạn: ${filePath}`);
-                            }
-                        });
-                    }, FILE_EXPIRATION_MS);
-
-                    // Trả về URL cho người dùng
-                    res.writeHead(200, {
-                        'Content-Type': 'text/plain; charset=utf-8',
-                        'Access-Control-Allow-Origin': '*'
-                    });
-                    res.end(publicUrl);
-                });
-
-            } catch (error) {
-                console.error("Gửi phản hồi lỗi 500 do giải mã thất bại.");
-                res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-                res.end(`Lỗi Server Nội Bộ: ${error.message}`);
-            }
-        });
-        req.on('error', (err) => {
-          console.error('Lỗi request:', err);
-          res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-          res.end('Lỗi Server Nội Bộ khi xử lý request.');
-        });
-
-    // Xử lý yêu cầu GET đến /files/...
-    } else if (req.method === 'GET' && req.url.startsWith('/files/')) {
-        const requestedFilename = path.basename(req.url); // Lấy tên file, tránh directory traversal
-        const filePath = path.join(TEMP_DIR_PATH, requestedFilename);
-
-        console.log(`Nhận GET ${req.url} lúc ${new Date().toISOString()}, phục vụ file: ${filePath}`);
-
-        // Kiểm tra xem file có tồn tại trong thư mục tạm không
-        fs.access(filePath, fs.constants.R_OK, (err) => {
-            if (err) {
-                console.warn(`File không tồn tại hoặc không đọc được: ${filePath}`);
-                res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-                res.end('File not found or expired.');
-                return;
-            }
-
-            // Phục vụ file
-            res.writeHead(200, {
-                'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
-                'Access-Control-Allow-Origin': '*'
-             });
-            const readStream = fs.createReadStream(filePath);
-            readStream.pipe(res);
-
-            readStream.on('error', (streamErr) => {
-                console.error(`Lỗi khi đọc file ${filePath}:`, streamErr);
-                // Nếu stream lỗi, có thể header đã được gửi, không thể gửi 500
-                // Chỉ có thể kết thúc response nếu nó chưa kết thúc
-                if (!res.writableEnded) {
-                     res.end();
-                }
-            });
-        });
-
-    } else {
-        // Các đường dẫn hoặc phương thức khác
-        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Endpoint không hợp lệ. Sử dụng POST /decrypt hoặc GET /files/<filename>.m3u8');
+    if (typeof encryptedDataString !== 'string' || !encryptedDataString) {
+        console.error('[AnimeVietsub Route] Lỗi: Request body trống hoặc không phải dạng text.');
+        return res.status(400).type('text/plain; charset=utf-8').send('Lỗi: Request body trống hoặc không phải dạng text.');
     }
-};
 
-// --- TẠO VÀ KHỞI ĐỘNG HTTP SERVER ---
-const server = http.createServer(requestHandler);
+    console.log(`[AnimeVietsub Route] Dữ liệu nhận được (50 ký tự đầu): ${encryptedDataString.substring(0, 50)}...`);
 
-server.listen(PORT, () => {
-    console.log(`Server giải mã đang lắng nghe trên cổng ${PORT}`);
-    console.log(`Thư mục lưu file tạm: ${TEMP_DIR_PATH}`);
-    console.log(`URL cơ sở để truy cập file: ${BASE_URL}/files/`);
-    console.log('--------------------------------------------------');
+    try {
+        const m3u8Content = decryptAndDecompress(encryptedDataString);
+        const randomFilename = `${crypto.randomBytes(16).toString('hex')}.m3u8`;
+        const filePath = path.join(TEMP_DIR_PATH, randomFilename);
+        // Tạo URL động dựa trên request host và protocol
+        const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
+        const publicUrl = `${requestBaseUrl}/animevietsub/files/${randomFilename}`; // Thêm prefix '/animevietsub'
+
+        await fsp.writeFile(filePath, m3u8Content, 'utf8');
+        console.log(`[AnimeVietsub Route] Đã giải mã thành công, lưu vào: ${filePath}`);
+        console.log(`[AnimeVietsub Route] URL trả về: ${publicUrl}`);
+
+        // Lên lịch xóa file sau 12 giờ
+        setTimeout(() => {
+            fsp.unlink(filePath)
+                .then(() => console.log(`[AnimeVietsub Route] Đã tự động xóa file hết hạn: ${filePath}`))
+                .catch(unlinkErr => console.error(`[AnimeVietsub Route] Lỗi khi tự động xóa file ${filePath}:`, unlinkErr));
+        }, FILE_EXPIRATION_MS);
+
+        // Trả về URL cho người dùng
+        res.status(200).type('text/plain; charset=utf-8').send(publicUrl);
+
+    } catch (error) {
+        console.error("[AnimeVietsub Route] Gửi phản hồi lỗi 500 do giải mã/lưu file thất bại.");
+        res.status(500).type('text/plain; charset=utf-8').send(`Lỗi Server Nội Bộ: ${error.message}`);
+    }
 });
+
+// Route GET để phục vụ file M3U8 đã lưu
+router.get('/files/:filename', async (req, res) => {
+    const requestedFilename = path.basename(req.params.filename || ''); // Lấy tên file, tránh directory traversal
+    const filePath = path.join(TEMP_DIR_PATH, requestedFilename);
+
+    console.log(`\n[AnimeVietsub Route] Nhận GET /files/${requestedFilename} lúc ${new Date().toISOString()}`);
+
+    // Kiểm tra xem tên file có hợp lệ không (chỉ chứa ký tự hex và đuôi .m3u8)
+    if (!/^[a-f0-9]{32}\.m3u8$/.test(requestedFilename)) {
+         console.warn(`[AnimeVietsub Route] Tên file không hợp lệ: ${requestedFilename}`);
+         return res.status(400).type('text/plain; charset=utf-8').send('Bad request: Invalid filename format.');
+    }
+
+    try {
+        // Kiểm tra file tồn tại và có quyền đọc
+        await fsp.access(filePath, fs.constants.R_OK);
+        console.log(`[AnimeVietsub Route] Đang phục vụ file: ${filePath}`);
+        // Phục vụ file
+        res.status(200).sendFile(filePath, {
+            headers: {
+                'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8', // MIME type chuẩn cho HLS
+                'Access-Control-Allow-Origin': '*' // Cho phép truy cập từ nguồn khác
+            }
+        }, (err) => {
+            if (err) {
+                // Lỗi xảy ra trong quá trình gửi file (hiếm khi)
+                console.error(`[AnimeVietsub Route] Lỗi khi gửi file ${filePath}:`, err);
+                if (!res.headersSent) {
+                     res.status(500).send('Lỗi khi gửi file.');
+                }
+            } else {
+                 console.log(`[AnimeVietsub Route] Đã gửi xong file: ${filePath}`);
+            }
+        });
+    } catch (error) {
+        // File không tồn tại hoặc không có quyền đọc
+        console.warn(`[AnimeVietsub Route] File không tồn tại hoặc không đọc được: ${filePath}`);
+        res.status(404).type('text/plain; charset=utf-8').send('File not found or expired.');
+    }
+});
+
+module.exports = router; // Xuất router để file app chính có thể sử dụng
