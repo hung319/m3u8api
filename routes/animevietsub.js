@@ -13,7 +13,7 @@ const router = express.Router();
 const TEMP_DIR_NAME = 'temp_m3u8';
 const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME); // Đường dẫn thư mục tạm
 const FILE_EXPIRATION_MS = 12 * 60 * 60 * 1000; // 12 giờ
-const BASE_URL = `http://localhost:3000`; // Sẽ được thay đổi động sau
+const BASE_URL = `https://0.0.0.0:3000`; // Sẽ được thay đổi động sau
 
 // --- TỰ ĐỘNG TẠO THƯ MỤC TẠM ---
 if (!fs.existsSync(TEMP_DIR_PATH)) {
