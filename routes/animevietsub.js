@@ -13,7 +13,7 @@ const router = express.Router();
 const TEMP_DIR_NAME = 'temp_m3u8';
 const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME); // Đường dẫn thư mục tạm
 const FILE_EXPIRATION_MS = 12 * 60 * 60 * 1000; // 12 giờ
-// const BASE_URL = `http://0.0.0.0:3000`; // Sẽ được thay đổi động sau (dòng này không còn cần thiết cho publicUrl nếu bạn dùng req.get('host'))
+const BASE_URL = `http://0.0.0.0:3000`; // Sẽ được thay đổi động sau (dòng này không còn cần thiết cho publicUrl nếu bạn dùng req.get('host'))
 
 // URL Proxy của bạn
 const PROXY_URL_BASE = 'https://prxclf.013666.xyz/'; // Thay đổi nếu cần
