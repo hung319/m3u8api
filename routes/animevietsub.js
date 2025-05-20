@@ -179,7 +179,7 @@ router.get('/files/:filename', async (req, res) => {
 
 
 // --- ENDPOINT MỚI: Proxy cho các segment video ---
-router.get('/animevietsub/segment_proxy', async (req, res) => {
+router.get(/segment_proxy', async (req, res) => {
     const { targetUrl, targetReferer } = req.query; // Express tự động decodeURIComponent các query params
 
     if (!targetUrl) {
