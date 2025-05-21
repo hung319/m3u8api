@@ -1,21 +1,29 @@
 const express = require('express');
 const crypto = require('crypto');
 const zlib = require('zlib');
-const fs = require('fs');
-const fsp = fs.promises;
-const path = require('path');
+// const fs = require('fs'); // fs và fsp không còn cần thiết cho việc lưu file M3U8 nữa
+// const fsp = fs.promises;
+const path = require('path'); // path vẫn có thể cần cho __dirname
 const { Buffer } = require('buffer');
-const axios = require('axios'); // <<< THÊM DÒNG NÀY
+const axios = require('axios');
+const NodeCache = require('node-cache'); // <<< THÊM DÒNG NÀY
 
 const router = express.Router();
 
 // --- CẤU HÌNH ---
-const TEMP_DIR_NAME = 'temp_m3u8';
-const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME);
+// const TEMP_DIR_NAME = 'temp_m3u8'; // Không còn dùng thư mục tạm cho M3U8
+// const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME); // Không còn dùng
 const FILE_EXPIRATION_MS = 12 * 60 * 60 * 1000; // 12 giờ
-const PROXY_URL_BASE = 'https://prxclf.013666.xyz/'; // URL proxy của bạn
+const PROXY_URL_BASE = 'https://prxclf.013666.xyz/';
 
-// --- TỰ ĐỘNG TẠO THƯ MỤC TẠM ---
+// Khởi tạo cache cho M3U8
+// stdTTL: thời gian sống mặc định của một cache item (tính bằng giây)
+// checkperiod: chu kỳ kiểm tra và xóa các item hết hạn (tính bằng giây)
+const m3u8Cache = new NodeCache({ stdTTL: FILE_EXPIRATION_MS / 1000, checkperiod: Math.floor(FILE_EXPIRATION_MS / 1000 * 0.2) });
+console.log('[AnimeVietsub] M3U8 In-memory Cache đã được khởi tạo.');
+
+// --- TỰ ĐỘNG TẠO THƯ MỤC TẠM --- (Phần này có thể không cần nữa nếu bạn không lưu file nào khác)
+/*
 if (!fs.existsSync(TEMP_DIR_PATH)) {
     try {
         fs.mkdirSync(TEMP_DIR_PATH, { recursive: true });
@@ -27,8 +35,8 @@ if (!fs.existsSync(TEMP_DIR_PATH)) {
 } else {
      console.log(`[AnimeVietsub] Thư mục tạm đã tồn tại: ${TEMP_DIR_PATH}`);
 }
+*/
 
-// Khóa gốc (Base64 encoded)
 const key_string_b64 = "ZG1fdGhhbmdfc3VjX3ZhdF9nZXRfbGlua19hbl9kYnQ=";
 let aes_key_bytes = null;
 
@@ -64,129 +72,104 @@ function decryptAndDecompress(encrypted_data_string_b64) {
         const decompressed_bytes = zlib.inflateRawSync(decrypted_bytes_padded);
         let m3u8_content_raw = decompressed_bytes.toString('utf8');
 
-        console.log('[AnimeVietsub] Đang xử lý nội dung M3U8...');
+        // console.log('[AnimeVietsub] Đang xử lý nội dung M3U8...'); // Giảm log
         m3u8_content_raw = m3u8_content_raw.trim().replace(/^"|"$/g, '');
         m3u8_content_raw = m3u8_content_raw.replace(/\\n/g, '\n');
-        console.log('[AnimeVietsub] Đã xử lý xong nội dung M3U8 ban đầu.');
+        // console.log('[AnimeVietsub] Đã xử lý xong nội dung M3U8 ban đầu.'); // Giảm log
         return m3u8_content_raw;
     } catch (error) {
-        console.error("\n[AnimeVietsub] Lỗi giải mã/giải nén:", error.message);
-        console.error("[AnimeVietsub] Dữ liệu đầu vào (50 ký tự đầu):", cleaned_encdata_b64.substring(0, 50) + "...");
+        console.error("[AnimeVietsub] Lỗi giải mã/giải nén:", error.message);
+        // console.error("[AnimeVietsub] Dữ liệu đầu vào (50 ký tự đầu):", cleaned_encdata_b64.substring(0, 50) + "..."); // Giảm log lỗi chi tiết
         throw new Error(`Giải mã thất bại: ${error.message}`);
     }
 }
 
 router.use('/decrypt', express.text({ type: '*/*' }));
 
-// Route POST để giải mã và tạo M3U8 với link segment trỏ về server này
 router.post('/decrypt', async (req, res) => {
-    console.log(`\n[AnimeVietsub] Nhận POST /decrypt lúc ${new Date().toISOString()}`);
+    // console.log(`\n[AnimeVietsub] Nhận POST /decrypt lúc ${new Date().toISOString()}`); // Giảm log
     const encryptedDataString = req.body;
 
     if (typeof encryptedDataString !== 'string' || !encryptedDataString) {
         console.error('[AnimeVietsub] Lỗi: Request body trống hoặc không phải dạng text.');
         return res.status(400).type('text/plain; charset=utf-8').send('Lỗi: Request body trống hoặc không phải dạng text.');
     }
-    console.log(`[AnimeVietsub] Dữ liệu nhận được (50 ký tự đầu): ${encryptedDataString.substring(0, 50)}...`);
+    // console.log(`[AnimeVietsub] Dữ liệu nhận được (50 ký tự đầu): ${encryptedDataString.substring(0, 50)}...`); // Giảm log
 
-    const apiKey = process.env.PROXY_API_KEY; // Vẫn cần API key này cho server gọi đi
+    const apiKey = process.env.PROXY_API_KEY;
     if (!apiKey) {
         console.error('[AnimeVietsub] Lỗi nghiêm trọng: PROXY_API_KEY chưa được cấu hình trong biến môi trường.');
-        return res.status(500).type('text/plain; charset=utf-8').send('Lỗi Server: Cấu hình proxy bị thiếu. Vui lòng liên hệ quản trị viên.');
+        return res.status(500).type('text/plain; charset=utf-8').send('Lỗi Server: Cấu hình proxy bị thiếu.');
     }
 
     try {
         let m3u8Content = decryptAndDecompress(encryptedDataString);
-        const initialReferer = req.headers.referer || ''; // Referer từ request gốc của client
+        const initialReferer = req.headers.referer || '';
         const requestScheme = req.protocol;
         const requestHost = req.get('host');
 
-        console.log(`[AnimeVietsub] Initial Referer for M3U8 generation: ${initialReferer}`);
+        // console.log(`[AnimeVietsub] Initial Referer for M3U8 generation: ${initialReferer}`); // Giảm log
 
         const lines = m3u8Content.split('\n');
         const processedLines = lines.map(line => {
             const trimmedLine = line.trim();
             if (trimmedLine && !trimmedLine.startsWith('#')) {
                 const originalSegmentUrl = trimmedLine;
-                // Tạo URL trỏ về endpoint /segment_proxy trên chính server này
-                // Các tham số targetUrl và targetReferer sẽ được mã hóa để truyền qua query string
                 const selfProxiedUrl = `${requestScheme}://${requestHost}/animevietsub/segment_proxy?targetUrl=${encodeURIComponent(originalSegmentUrl)}&targetReferer=${encodeURIComponent(initialReferer)}`;
-                // console.log(`[AnimeVietsub] M3U8 Segment: ${originalSegmentUrl} -> Self-Proxied: ${selfProxiedUrl.substring(0,150)}...`);
                 return selfProxiedUrl;
             }
             return line;
         });
         m3u8Content = processedLines.join('\n');
-        console.log('[AnimeVietsub] Đã tạo M3U8 với các URL segment trỏ về server proxy nội bộ.');
+        // console.log('[AnimeVietsub] Đã tạo M3U8 với các URL segment trỏ về server proxy nội bộ.'); // Giảm log
 
         const randomFilename = `${crypto.randomBytes(16).toString('hex')}.m3u8`;
-        const filePath = path.join(TEMP_DIR_PATH, randomFilename);
         const publicM3u8Url = `${requestScheme}://${requestHost}/animevietsub/files/${randomFilename}`;
 
-        await fsp.writeFile(filePath, m3u8Content, 'utf8');
-        console.log(`[AnimeVietsub] Đã lưu file M3U8 (self-proxied) vào: ${filePath}`);
-        console.log(`[AnimeVietsub] URL M3U8 (self-proxied) trả về: ${publicM3u8Url}`);
-
-        setTimeout(() => {
-            fsp.unlink(filePath)
-                .then(() => console.log(`[AnimeVietsub] Đã tự động xóa file M3U8 (self-proxied) hết hạn: ${filePath}`))
-                .catch(unlinkErr => console.error(`[AnimeVietsub] Lỗi khi tự động xóa file M3U8 (self-proxied) ${filePath}:`, unlinkErr));
-        }, FILE_EXPIRATION_MS);
+        // Lưu vào cache thay vì ghi ra file
+        m3u8Cache.set(randomFilename, m3u8Content);
+        // console.log(`[AnimeVietsub] Đã lưu M3U8 vào cache: ${randomFilename}`); // Giảm log
+        // console.log(`[AnimeVietsub] URL M3U8 (self-proxied) trả về: ${publicM3u8Url}`); // Giảm log
 
         res.status(200).type('text/plain; charset=utf-8').send(publicM3u8Url);
 
     } catch (error) {
-        console.error("[AnimeVietsub] Lỗi xử lý chính tại /decrypt:", error.message, error.stack);
+        console.error("[AnimeVietsub] Lỗi xử lý chính tại /decrypt:", error.message, error.stack); // Giữ stack để debug
         res.status(500).type('text/plain; charset=utf-8').send(`Lỗi Server Nội Bộ: ${error.message}`);
     }
 });
 
-// Route GET để phục vụ file M3U8 (đã được xử lý ở /decrypt)
 router.get('/files/:filename', async (req, res) => {
-    // ... (Giữ nguyên như cũ)
     const requestedFilename = path.basename(req.params.filename || '');
-    const filePath = path.join(TEMP_DIR_PATH, requestedFilename);
-    console.log(`\n[AnimeVietsub] Nhận GET /files/${requestedFilename} lúc ${new Date().toISOString()}`);
+    // console.log(`\n[AnimeVietsub] Nhận GET /files/${requestedFilename} lúc ${new Date().toISOString()}`); // Giảm log
 
     if (!/^[a-f0-9]{32}\.m3u8$/.test(requestedFilename)) {
-        console.warn(`[AnimeVietsub] Tên file M3U8 không hợp lệ: ${requestedFilename}`);
+        console.warn(`[AnimeVietsub] Tên file M3U8 không hợp lệ (format): ${requestedFilename}`);
         return res.status(400).type('text/plain; charset=utf-8').send('Bad request: Invalid filename format.');
     }
 
-    try {
-        await fsp.access(filePath, fs.constants.R_OK);
-        console.log(`[AnimeVietsub] Đang phục vụ file M3U8: ${filePath}`);
-        res.status(200).sendFile(filePath, {
-            headers: {
-                'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
-                'Access-Control-Allow-Origin': '*'
-            }
-        }, (err) => {
-            if (err) {
-                console.error(`[AnimeVietsub] Lỗi khi gửi file M3U8 ${filePath}:`, err);
-                if (!res.headersSent) {
-                    res.status(err.status || 500).send('Lỗi khi gửi file M3U8.');
-                }
-            } else {
-                console.log(`[AnimeVietsub] Đã gửi xong file M3U8: ${filePath}`);
-            }
-        });
-    } catch (error) {
-        console.warn(`[AnimeVietsub] File M3U8 không tồn tại hoặc không đọc được: ${filePath}`);
+    // Lấy từ cache
+    const cachedM3u8Content = m3u8Cache.get(requestedFilename);
+
+    if (cachedM3u8Content) {
+        // console.log(`[AnimeVietsub] Phục vụ M3U8 từ cache: ${requestedFilename}`); // Giảm log
+        res.header('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8')
+           .header('Access-Control-Allow-Origin', '*')
+           .status(200)
+           .send(cachedM3u8Content);
+    } else {
+        console.warn(`[AnimeVietsub] M3U8 không tìm thấy trong cache hoặc đã hết hạn: ${requestedFilename}`);
         res.status(404).type('text/plain; charset=utf-8').send('File M3U8 not found or expired.');
     }
 });
 
-
-// --- ENDPOINT MỚI: Proxy cho các segment video ---
-router.get('/segment_proxy', async (req, res) => {
-    const { targetUrl, targetReferer } = req.query; // Express tự động decodeURIComponent các query params
+router.get('/segment_proxy', async (req, res) => { // Đã sửa đường dẫn này ở lần trước
+    const { targetUrl, targetReferer } = req.query;
 
     if (!targetUrl) {
         console.warn('[AnimeVietsub SegmentProxy] Yêu cầu thiếu targetUrl.');
         return res.status(400).send('Bad Request: targetUrl is required.');
     }
-    // targetReferer có thể rỗng nếu request gốc không có referer
 
     const apiKey = process.env.PROXY_API_KEY;
     if (!apiKey) {
@@ -194,27 +177,22 @@ router.get('/segment_proxy', async (req, res) => {
         return res.status(500).send('Server Configuration Error: Proxy API key missing.');
     }
 
-    // Tạo URL đầy đủ để gọi đến proxy prxclf.013666.xyz
-    // targetUrl và targetReferer đã được decode bởi Express, cần encode lại cho URL mới
     const finalExternalProxyUrl = `${PROXY_URL_BASE}?url=${encodeURIComponent(targetUrl)}&referer=${encodeURIComponent(targetReferer || '')}&auth_token=${apiKey}`;
     
-    console.log(`[AnimeVietsub SegmentProxy] Đang proxy segment: ${targetUrl} (Referer: ${targetReferer || 'N/A'})`);
-    // console.log(`[AnimeVietsub SegmentProxy] Gọi đến external proxy: ${finalExternalProxyUrl.substring(0,150)}...`);
-
+    // console.log(`[AnimeVietsub SegmentProxy] Đang proxy segment: ${targetUrl} (Referer: ${targetReferer || 'N/A'})`); // Log này rất nhiều, nên bỏ
+    
     try {
         const proxyResponse = await axios({
             method: 'get',
             url: finalExternalProxyUrl,
             responseType: 'stream',
             headers: {
-                'User-Agent': req.headers['user-agent'] || 'AnimeVietsubInternalProxy/1.0', // Chuyển tiếp User-Agent của client
-                // Cân nhắc chuyển tiếp thêm các header khác nếu cần, ví dụ: Range
+                'User-Agent': req.headers['user-agent'] || 'AnimeVietsubInternalProxy/1.0',
                 ...(req.headers.range && { 'Range': req.headers.range })
             },
-            timeout: 30000 // 30 giây timeout
+            timeout: 30000
         });
 
-        // Chuyển tiếp các header quan trọng từ phản hồi của external proxy về client
         const headersToPipe = ['content-type', 'content-length', 'last-modified', 'etag', 'cache-control', 'expires', 'accept-ranges', 'content-disposition', 'content-range'];
         headersToPipe.forEach(headerName => {
             if (proxyResponse.headers[headerName]) {
@@ -222,56 +200,39 @@ router.get('/segment_proxy', async (req, res) => {
             }
         });
         
-        res.status(proxyResponse.status); // Đặt HTTP status của chúng ta giống như của external proxy
-        proxyResponse.data.pipe(res); // Stream dữ liệu video về client
+        res.status(proxyResponse.status);
+        proxyResponse.data.pipe(res);
 
         proxyResponse.data.on('error', (streamErr) => {
-            console.error('[AnimeVietsub SegmentProxy] Lỗi stream từ external proxy:', streamErr);
+            console.error('[AnimeVietsub SegmentProxy] Lỗi stream từ external proxy:', streamErr.message);
             if (!res.headersSent) {
                 res.status(502).send('Bad Gateway: Lỗi stream từ upstream proxy.');
             }
-            res.end(); // Đảm bảo kết thúc response
+            res.end();
         });
-        proxyResponse.data.on('end', () => {
-            res.end(); // Đảm bảo kết thúc response khi stream thành công
-        });
+        // Không cần res.end() ở 'end' event của proxyResponse.data vì pipe sẽ tự xử lý việc kết thúc response khi nguồn stream kết thúc.
+        // Thêm nó có thể gây lỗi "write after end".
 
     } catch (error) {
-        console.error('[AnimeVietsub SegmentProxy] Lỗi khi gọi external proxy hoặc stream:', error.message);
-        if (error.response) { // Lỗi từ phía external proxy (ví dụ: 4xx, 5xx)
+        console.error('[AnimeVietsub SegmentProxy] Lỗi khi gọi external proxy:', error.message);
+        if (error.response) {
             console.error(`[AnimeVietsub SegmentProxy] External Proxy Error: Status ${error.response.status}`);
-            // Cố gắng đọc và log error body từ external proxy nếu là stream
-            let errorBody = 'Could not read error body from stream.';
-            if (error.response.data && typeof error.response.data.read === 'function') {
-                 // error.response.data is a stream
-                try {
-                    const chunks = [];
-                    for await (const chunk of error.response.data) {
-                        chunks.push(chunk);
-                    }
-                    errorBody = Buffer.concat(chunks).toString();
-                } catch (e) {
-                    // Ignore
-                }
-            } else if (error.response.data) {
-                errorBody = JSON.stringify(error.response.data);
-            }
-            console.error(`[AnimeVietsub SegmentProxy] External Proxy Error Body: ${errorBody}`);
-
+            // Không cố đọc error.response.data nếu là stream trong trường hợp này để tránh phức tạp thêm,
+            // status code và message thường đủ cho việc debug lỗi từ external proxy.
+            // Nếu cần debug sâu hơn, bạn có thể thêm lại logic đọc stream lỗi.
             if (!res.headersSent) {
-                // Gửi lại status và một phần thông báo lỗi (nếu có và an toàn)
-                res.status(error.response.status).send(`Error from upstream proxy: ${error.response.status}`);
+                res.status(error.response.status || 502).send(`Error from upstream proxy: ${error.response.status}`);
             } else {
                  res.end();
             }
-        } else if (error.request) { // Request đã được gửi nhưng không nhận được phản hồi
+        } else if (error.request) {
             console.error('[AnimeVietsub SegmentProxy] External Proxy: No response received.');
             if (!res.headersSent) {
                 res.status(504).send('Gateway Timeout: No response from upstream proxy.');
             } else {
                  res.end();
             }
-        } else { // Lỗi khác (ví dụ: lỗi cấu hình request axios)
+        } else {
             if (!res.headersSent) {
                 res.status(500).send('Internal Server Error while proxying segment.');
             } else {
