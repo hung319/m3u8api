@@ -3,20 +3,20 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",  // Script để khởi động server
+    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Server cho Mahiro cung cấp API anime", // Bạn có thể mô tả rõ hơn
+  "description": "Server cho Mahiro cung cấp API anime",
   "dependencies": {
-    "axios": "^1.7.2",         // Cập nhật phiên bản axios
-    "cheerio": "^1.0.0-rc.12", // Giữ nguyên hoặc dùng ^1.0.0
-    "express": "^4.19.2",       // Cập nhật phiên bản express
+    "axios": "^1.7.2",         
+    "cheerio": "^1.0.0-rc.12",
+    "express": "^4.19.2",       
     "crypto-js": "^4.2.0",
-    "uuid": "^9.0.1"           // Thêm uuid
-    // "node-cron": "^3.0.3"   // Tùy chọn: Thêm nếu bạn muốn dùng cron job để dọn file
-    // "cors": "^2.8.5"        // Tùy chọn: Thêm nếu cần xử lý CORS
+    "uuid": "^9.0.1"           
+    "node-cron": "^3.0.3"
+    "cors": "^2.8.5"
   }
 }
