@@ -9,7 +9,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 // --- Hằng số giải mã ---
-const key = "caphedaklak"; // QUAN TRỌNG: Trong môi trường production, hãy bảo vệ key này cẩn thận!
+const key = "caphedaklak";
 
 // --- Đối tượng CryptoJSAesJson ---
 const CryptoJSAesJson = {
@@ -42,12 +42,16 @@ const M3U8_STATIC_ROUTE_SEGMENT = '/files';
 const M3U8_FILESYSTEM_STORAGE_DIR = path.join(__dirname, '..', 'public', M3U8_STORAGE_SUBDIR_NAME);
 const MAX_TIMEOUT_DELAY = 2147483647;
 
+// --- Cấu hình Proxy cho TS Link ---
+const PROXY_BASE_URL = "https://prxclf.013666.xyz/";
+const PROXY_AUTH_TOKEN = "11042006";
+
 // --- Phục vụ file tĩnh ---
 router.use(M3U8_STATIC_ROUTE_SEGMENT, express.static(M3U8_FILESYSTEM_STORAGE_DIR, { maxAge: '1h' }));
 console.log(`[ANIME47] Sẵn sàng phục vụ file M3U8 tĩnh từ ${M3U8_FILESYSTEM_STORAGE_DIR} tại route <base_anime47_path>${M3U8_STATIC_ROUTE_SEGMENT}`);
 
 // --- Logic xóa file và lên lịch xóa ---
-async function deleteFile(filePath) {
+async function deleteFile(filePath) { /* ... (Giữ nguyên như phiên bản trước) ... */ 
     try {
         await fs.unlink(filePath);
         console.log(`[ANIME47][DELETE] Đã xóa file: ${filePath}`);
@@ -58,7 +62,7 @@ async function deleteFile(filePath) {
     }
 }
 
-function scheduleDeletion(filePath, delayMs) {
+function scheduleDeletion(filePath, delayMs) { /* ... (Giữ nguyên như phiên bản trước) ... */ 
     if (delayMs <= 0) {
         console.log(`[ANIME47][SCHED] File ${filePath} đã quá hạn. Xóa ngay.`);
         deleteFile(filePath).catch(err => console.error(`[ANIME47][SCHED] Lỗi khi xóa file (quá hạn) ${filePath}:`, err));
@@ -73,7 +77,7 @@ function scheduleDeletion(filePath, delayMs) {
 }
 
 // --- Quét file cũ khi khởi động ---
-async function performStartupScanAndScheduleDeletions() {
+async function performStartupScanAndScheduleDeletions() { /* ... (Giữ nguyên như phiên bản trước) ... */ 
     console.log('[ANIME47][STARTUP_SCAN] Bắt đầu quét file M3U8 cũ...');
     try {
         await fs.mkdir(M3U8_FILESYSTEM_STORAGE_DIR, { recursive: true });
@@ -109,13 +113,21 @@ performStartupScanAndScheduleDeletions().catch(err => console.error('[ANIME47][C
 // --- Headers chung cho Axios ---
 const AXIOS_REQUEST_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    // Referer sẽ được đặt động dựa trên URL đang fetch
 };
 
 // --- Route xử lý chính ---
 router.get('/link/:base64data', async (req, res) => {
     const base64EncodedJson = req.params.base64data;
+    // **MỚI**: Lấy referer từ query parameter của client
+    const clientReferer = req.query.referer;
+
     console.log(`\n[ANIME47] --- Bắt đầu xử lý yêu cầu cho /link/${base64EncodedJson.substring(0, 30)}... ---`);
+    if (clientReferer) {
+        console.log(`[ANIME47][INFO] Referer từ client: ${clientReferer}`);
+    } else {
+        console.log("[ANIME47][LỖI] Thiếu tham số 'referer' trong query URL của client.");
+        return res.status(400).json({ error: "Missing 'referer' query parameter." });
+    }
 
     if (!base64EncodedJson) {
         console.log("[ANIME47][LỖI] Thiếu dữ liệu Base64.");
@@ -124,11 +136,11 @@ router.get('/link/:base64data', async (req, res) => {
 
     let initialMasterPlaylistUrl;
     let initialM3u8Content;
-    let actualPlaylistUrlToProcess; // URL của playlist thực sự sẽ được xử lý (master hoặc media)
-    let contentToProcess;         // Nội dung của playlist thực sự sẽ được xử lý
+    let actualPlaylistUrlToProcess;
+    let contentToProcess;
 
     try {
-        // Bước 1 & 2: Giải mã Base64 và AES để lấy URL M3U8 ban đầu
+        // Bước 1 & 2: Giải mã Base64 và AES
         let decryptedJsonString;
         try {
             const jsonStringFromBase64 = Buffer.from(base64EncodedJson, 'base64').toString('utf8');
@@ -160,11 +172,11 @@ router.get('/link/:base64data', async (req, res) => {
             }
         }
 
-        // Bước 4a: Tải nội dung M3U8 ban đầu (có thể là master hoặc media playlist)
+        // Bước 4a: Tải nội dung M3U8 ban đầu
         try {
             console.log(`[ANIME47][...] Bước 4a: Đang tải M3U8 ban đầu từ: ${initialMasterPlaylistUrl}`);
             const response = await axios.get(initialMasterPlaylistUrl, {
-                timeout: 20000, // Tăng timeout một chút
+                timeout: 20000,
                 headers: { ...AXIOS_REQUEST_HEADERS, 'Referer': new url.URL(initialMasterPlaylistUrl).origin + '/' }
             });
             initialM3u8Content = response.data;
@@ -175,9 +187,9 @@ router.get('/link/:base64data', async (req, res) => {
             return res.status(500).json({ error: `Failed to fetch initial M3U8: ${initialMasterPlaylistUrl}`, details: fetchInitialError.message });
         }
 
-        // Bước 4b & 4c: Kiểm tra và tải media playlist nếu M3U8 ban đầu là master playlist
-        actualPlaylistUrlToProcess = initialMasterPlaylistUrl; // Mặc định
-        contentToProcess = initialM3u8Content;           // Mặc định
+        // Bước 4b & 4c: Kiểm tra và tải media playlist nếu M3U8 ban đầu là master
+        actualPlaylistUrlToProcess = initialMasterPlaylistUrl;
+        contentToProcess = initialM3u8Content;
 
         const linesInitial = initialM3u8Content.split(/[\r\n]+/);
         let isMaster = false;
@@ -194,9 +206,9 @@ router.get('/link/:base64data', async (req, res) => {
                         break;
                     }
                 }
-                break; // Tìm thấy #EXT-X-STREAM-INF, lấy stream đầu tiên
+                break;
             }
-            if (line.startsWith('#EXTINF:')) { // Nếu có #EXTINF, có thể đây đã là media playlist
+            if (line.startsWith('#EXTINF:')) {
                 isMaster = false;
                 break;
             }
@@ -216,62 +228,107 @@ router.get('/link/:base64data', async (req, res) => {
                 console.log("[ANIME47][OK] Bước 4c: Đã tải xong nội dung media playlist.");
             } catch (fetchMediaError) {
                 console.error(`[ANIME47][LỖI] Bước 4c: Lỗi tải media playlist (${actualPlaylistUrlToProcess}):`, fetchMediaError.message);
-                // Quyết định: Nếu không tải được media playlist con, có thể trả lỗi hoặc thử xử lý master playlist
-                // Hiện tại, trả lỗi để rõ ràng
                 return res.status(500).json({ error: `Failed to fetch media playlist: ${actualPlaylistUrlToProcess}`, details: fetchMediaError.message });
             }
         } else if (isMaster && !potentialMediaPlaylistPath) {
-            console.warn("[ANIME47][WARN] Là master playlist nhưng không tìm thấy media playlist con. Sẽ xử lý master playlist (có thể không đúng mục đích).");
-            // actualPlaylistUrlToProcess và contentToProcess vẫn là của M3U8 ban đầu
+            console.warn("[ANIME47][WARN] Là master playlist nhưng không tìm thấy media playlist con. Sẽ xử lý master playlist.");
         } else {
-            console.log("[ANIME47][INFO] M3U8 ban đầu có vẻ là media playlist hoặc không xác định được stream con. Xử lý trực tiếp.");
-            // actualPlaylistUrlToProcess và contentToProcess vẫn là của M3U8 ban đầu
+            console.log("[ANIME47][INFO] M3U8 ban đầu có vẻ là media playlist. Xử lý trực tiếp.");
         }
 
         // Bước 5: Chỉnh sửa contentToProcess (nội dung của media playlist)
-        console.log("[ANIME47][...] Bước 5: Đang chỉnh sửa nội dung M3U8 (đảm bảo URL tuyệt đối)...");
+        console.log("[ANIME47][...] Bước 5: Đang chỉnh sửa nội dung M3U8 (thêm proxy và đảm bảo URL tuyệt đối)...");
         let modifiedM3u8Content;
         try {
             const linesToProcess = contentToProcess.split(/[\r\n]+/);
             modifiedM3u8Content = linesToProcess.map(line => {
                 const trimmedLine = line.trim();
                 if (!trimmedLine) return "";
-                if (trimmedLine.startsWith('#EXTM3U') || trimmedLine.startsWith('#EXT-X-VERSION') || trimmedLine.startsWith('#EXT-X-TARGETDURATION') || trimmedLine.startsWith('#EXT-X-MEDIA-SEQUENCE') || trimmedLine.startsWith('#EXT-X-PLAYLIST-TYPE') || trimmedLine.startsWith('#EXT-X-ENDLIST') || trimmedLine.startsWith('#EXTINF') || trimmedLine.startsWith('#EXT-X-DISCONTINUITY') || trimmedLine.startsWith('#EXT-X-PROGRAM-DATE-TIME') || trimmedLine.startsWith('#EXT-X-BYTERANGE')) {
-                    return line; // Giữ nguyên các tag phổ biến không chứa URL cần xử lý trực tiếp kiểu này
+
+                // Giữ nguyên các tag M3U8 cơ bản không chứa URL cần thay đổi theo cách này
+                if (trimmedLine.startsWith('#EXTM3U') || 
+                    trimmedLine.startsWith('#EXT-X-VERSION') ||
+                    trimmedLine.startsWith('#EXT-X-TARGETDURATION') ||
+                    trimmedLine.startsWith('#EXT-X-MEDIA-SEQUENCE') ||
+                    trimmedLine.startsWith('#EXT-X-PLAYLIST-TYPE') ||
+                    trimmedLine.startsWith('#EXT-X-ENDLIST') || // Sẽ kiểm tra và thêm ở cuối nếu cần
+                    trimmedLine.startsWith('#EXTINF') ||
+                    trimmedLine.startsWith('#EXT-X-DISCONTINUITY') ||
+                    trimmedLine.startsWith('#EXT-X-PROGRAM-DATE-TIME') ||
+                    trimmedLine.startsWith('#EXT-X-BYTERANGE')) {
+                    return line;
                 }
 
+                let resolvedUrl; // URL đã được làm tuyệt đối
+
+                // Xử lý URI trong các tag như #EXT-X-KEY, #EXT-X-MAP
                 if (trimmedLine.includes('URI="')) {
                     const uriMatch = trimmedLine.match(/URI="([^"]+)"/);
                     if (uriMatch && uriMatch[1]) {
                         const relativeUri = uriMatch[1];
-                        if (relativeUri.startsWith('http://') || relativeUri.startsWith('https://') || relativeUri.startsWith('data:')) return line;
+                        if (relativeUri.startsWith('http://') || relativeUri.startsWith('https://') || relativeUri.startsWith('data:')) {
+                            resolvedUrl = relativeUri; // Đã tuyệt đối hoặc là data URI
+                        } else {
+                            try {
+                                resolvedUrl = new url.URL(relativeUri, actualPlaylistUrlToProcess).href;
+                            } catch (e) {
+                                console.warn(`[ANIME47][WARN] Bước 5: Không thể phân giải URI "${relativeUri}" (base: ${actualPlaylistUrlToProcess}). Giữ nguyên dòng.`);
+                                return line;
+                            }
+                        }
+                        // Hiện tại không bọc proxy cho key URI, chỉ làm tuyệt đối. Nếu cần bọc, thêm logic ở đây.
+                        // console.log(`[ANIME47][DEBUG] Resolved Key URI: ${resolvedUrl}`);
+                        return trimmedLine.replace(uriMatch[0], `URI="${resolvedUrl}"`);
+                    }
+                } 
+                // Xử lý các dòng là URL segment (không phải comment/tag)
+                else if (!trimmedLine.startsWith('#')) {
+                    if (trimmedLine.startsWith('http://') || trimmedLine.startsWith('https://')) {
+                        resolvedUrl = trimmedLine; // Đã tuyệt đối
+                    } else {
                         try {
-                            const absoluteUri = new url.URL(relativeUri, actualPlaylistUrlToProcess).href;
-                            return trimmedLine.replace(uriMatch[0], `URI="${absoluteUri}"`);
+                            resolvedUrl = new url.URL(trimmedLine, actualPlaylistUrlToProcess).href;
                         } catch (e) {
-                            console.warn(`[ANIME47][WARN] Bước 5: Không thể phân giải URI "${relativeUri}" (base: ${actualPlaylistUrlToProcess}). Giữ nguyên.`);
+                            console.warn(`[ANIME47][WARN] Bước 5: Không thể phân giải URL segment "${trimmedLine}" (base: ${actualPlaylistUrlToProcess}). Giữ nguyên dòng.`);
                             return line;
                         }
                     }
-                } else if (!trimmedLine.startsWith('#')) {
-                    if (trimmedLine.startsWith('http://') || trimmedLine.startsWith('https://')) return line;
-                    try {
-                        const absoluteSegmentUrl = new url.URL(trimmedLine, actualPlaylistUrlToProcess).href;
-                        return absoluteSegmentUrl;
-                    } catch (e) {
-                        console.warn(`[ANIME47][WARN] Bước 5: Không thể phân giải URL segment "${trimmedLine}" (base: ${actualPlaylistUrlToProcess}). Giữ nguyên.`);
-                        return line;
+
+                    // **MỚI**: Bọc resolvedUrl qua proxy nếu là link .ts
+                    // Cần kiểm tra kỹ hơn nếu có các định dạng segment khác (.m4s, .mp4, ...)
+                    if (resolvedUrl.includes('.ts')) { // Điều kiện để xác định là TS link
+                        try {
+                            const encodedOriginalUrl = encodeURIComponent(resolvedUrl);
+                            const encodedClientRef = encodeURIComponent(clientReferer); // clientReferer từ req.query
+                            const proxiedTsUrl = `${PROXY_BASE_URL}?url=${encodedOriginalUrl}&referer=${encodedClientRef}&auth_token=${PROXY_AUTH_TOKEN}`;
+                            // console.log(`[ANIME47][DEBUG] Original TS: ${resolvedUrl} -> Proxied TS: ${proxiedTsUrl}`);
+                            return proxiedTsUrl;
+                        } catch (e) {
+                            console.warn(`[ANIME47][WARN] Bước 5: Lỗi khi mã hóa URL cho proxy: ${resolvedUrl}. Lỗi: ${e.message}. Trả về URL đã phân giải.`);
+                            return resolvedUrl; // Fallback về URL đã được làm tuyệt đối
+                        }
+                    } else {
+                        // console.log(`[ANIME47][DEBUG] Resolved non-TS segment/line: ${resolvedUrl}`);
+                        return resolvedUrl; // Trả về URL đã làm tuyệt đối nếu không phải .ts
                     }
                 }
-                return line;
+                return line; // Trả lại dòng gốc cho các trường hợp khác
             }).filter(line => line !== null).join('\n');
+            
+            // **MỚI**: Đảm bảo #EXT-X-ENDLIST nếu cần
+            const isLiveStream = contentToProcess.toUpperCase().includes("#EXT-X-PLAYLIST-TYPE:LIVE");
+            if (!isLiveStream && !modifiedM3u8Content.includes("#EXT-X-ENDLIST")) {
+                modifiedM3u8Content += "\n#EXT-X-ENDLIST";
+                console.log("[ANIME47][INFO] Bước 5: Đã thêm #EXT-X-ENDLIST vào cuối M3U8 (do không phải LIVE và chưa có).");
+            }
+
             console.log("[ANIME47][OK] Bước 5: Đã chỉnh sửa nội dung M3U8.");
         } catch (modifyError) {
             console.error("[ANIME47][LỖI] Bước 5: Lỗi khi chỉnh sửa M3U8:", modifyError);
             return res.status(500).json({ error: "Failed to modify M3U8 content.", details: modifyError.message });
         }
 
-        // Bước 6: Lưu M3U8 đã chỉnh sửa, lên lịch xóa, tạo URL
+        // Bước 6: Lưu M3U8, lên lịch xóa, tạo URL
         let fileUrl;
         console.log("[ANIME47][...] Bước 6: Đang lưu file M3U8...");
         try {
