@@ -9,7 +9,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 // --- Hằng số giải mã ---
-const key = "caphedaklak";
+const key = "caphedaklak"; // QUAN TRỌNG: Bảo vệ key này cẩn thận!
 
 // --- Đối tượng CryptoJSAesJson ---
 const CryptoJSAesJson = {
@@ -51,7 +51,7 @@ router.use(M3U8_STATIC_ROUTE_SEGMENT, express.static(M3U8_FILESYSTEM_STORAGE_DIR
 console.log(`[ANIME47] Sẵn sàng phục vụ file M3U8 tĩnh từ ${M3U8_FILESYSTEM_STORAGE_DIR} tại route <base_anime47_path>${M3U8_STATIC_ROUTE_SEGMENT}`);
 
 // --- Logic xóa file và lên lịch xóa ---
-async function deleteFile(filePath) { /* ... (Giữ nguyên như phiên bản trước) ... */ 
+async function deleteFile(filePath) {
     try {
         await fs.unlink(filePath);
         console.log(`[ANIME47][DELETE] Đã xóa file: ${filePath}`);
@@ -62,7 +62,7 @@ async function deleteFile(filePath) { /* ... (Giữ nguyên như phiên bản tr
     }
 }
 
-function scheduleDeletion(filePath, delayMs) { /* ... (Giữ nguyên như phiên bản trước) ... */ 
+function scheduleDeletion(filePath, delayMs) {
     if (delayMs <= 0) {
         console.log(`[ANIME47][SCHED] File ${filePath} đã quá hạn. Xóa ngay.`);
         deleteFile(filePath).catch(err => console.error(`[ANIME47][SCHED] Lỗi khi xóa file (quá hạn) ${filePath}:`, err));
@@ -77,7 +77,7 @@ function scheduleDeletion(filePath, delayMs) { /* ... (Giữ nguyên như phiên
 }
 
 // --- Quét file cũ khi khởi động ---
-async function performStartupScanAndScheduleDeletions() { /* ... (Giữ nguyên như phiên bản trước) ... */ 
+async function performStartupScanAndScheduleDeletions() {
     console.log('[ANIME47][STARTUP_SCAN] Bắt đầu quét file M3U8 cũ...');
     try {
         await fs.mkdir(M3U8_FILESYSTEM_STORAGE_DIR, { recursive: true });
@@ -118,16 +118,23 @@ const AXIOS_REQUEST_HEADERS = {
 // --- Route xử lý chính ---
 router.get('/link/:base64data', async (req, res) => {
     const base64EncodedJson = req.params.base64data;
-    // **MỚI**: Lấy referer từ query parameter của client
-    const clientReferer = req.query.referer;
+    
+    // --- CẬP NHẬT LOGIC LẤY REFERER ---
+    let clientReferer = req.headers.referer || req.query.referer; 
 
     console.log(`\n[ANIME47] --- Bắt đầu xử lý yêu cầu cho /link/${base64EncodedJson.substring(0, 30)}... ---`);
-    if (clientReferer) {
-        console.log(`[ANIME47][INFO] Referer từ client: ${clientReferer}`);
-    } else {
-        console.log("[ANIME47][LỖI] Thiếu tham số 'referer' trong query URL của client.");
-        return res.status(400).json({ error: "Missing 'referer' query parameter." });
+    
+    if (req.headers.referer) {
+        console.log(`[ANIME47][INFO] Referer nhận từ HTTP header của client: ${req.headers.referer}`);
+    } else if (req.query.referer) {
+        console.log(`[ANIME47][INFO] Referer nhận từ query parameter của client: ${req.query.referer}`);
     }
+
+    if (!clientReferer) {
+        console.log("[ANIME47][LỖI] Thiếu thông tin 'referer'. Vui lòng gửi qua HTTP header 'referer' hoặc query parameter 'referer'.");
+        return res.status(400).json({ error: "Missing 'referer'. Please send it as an HTTP 'referer' header or as a 'referer' query parameter." });
+    }
+    // --- KẾT THÚC CẬP NHẬT LOGIC LẤY REFERER ---
 
     if (!base64EncodedJson) {
         console.log("[ANIME47][LỖI] Thiếu dữ liệu Base64.");
@@ -245,13 +252,12 @@ router.get('/link/:base64data', async (req, res) => {
                 const trimmedLine = line.trim();
                 if (!trimmedLine) return "";
 
-                // Giữ nguyên các tag M3U8 cơ bản không chứa URL cần thay đổi theo cách này
                 if (trimmedLine.startsWith('#EXTM3U') || 
                     trimmedLine.startsWith('#EXT-X-VERSION') ||
                     trimmedLine.startsWith('#EXT-X-TARGETDURATION') ||
                     trimmedLine.startsWith('#EXT-X-MEDIA-SEQUENCE') ||
                     trimmedLine.startsWith('#EXT-X-PLAYLIST-TYPE') ||
-                    trimmedLine.startsWith('#EXT-X-ENDLIST') || // Sẽ kiểm tra và thêm ở cuối nếu cần
+                    trimmedLine.startsWith('#EXT-X-ENDLIST') ||
                     trimmedLine.startsWith('#EXTINF') ||
                     trimmedLine.startsWith('#EXT-X-DISCONTINUITY') ||
                     trimmedLine.startsWith('#EXT-X-PROGRAM-DATE-TIME') ||
@@ -259,15 +265,14 @@ router.get('/link/:base64data', async (req, res) => {
                     return line;
                 }
 
-                let resolvedUrl; // URL đã được làm tuyệt đối
+                let resolvedUrl;
 
-                // Xử lý URI trong các tag như #EXT-X-KEY, #EXT-X-MAP
                 if (trimmedLine.includes('URI="')) {
                     const uriMatch = trimmedLine.match(/URI="([^"]+)"/);
                     if (uriMatch && uriMatch[1]) {
                         const relativeUri = uriMatch[1];
                         if (relativeUri.startsWith('http://') || relativeUri.startsWith('https://') || relativeUri.startsWith('data:')) {
-                            resolvedUrl = relativeUri; // Đã tuyệt đối hoặc là data URI
+                            resolvedUrl = relativeUri;
                         } else {
                             try {
                                 resolvedUrl = new url.URL(relativeUri, actualPlaylistUrlToProcess).href;
@@ -276,15 +281,13 @@ router.get('/link/:base64data', async (req, res) => {
                                 return line;
                             }
                         }
-                        // Hiện tại không bọc proxy cho key URI, chỉ làm tuyệt đối. Nếu cần bọc, thêm logic ở đây.
-                        // console.log(`[ANIME47][DEBUG] Resolved Key URI: ${resolvedUrl}`);
+                        // Hiện tại không bọc proxy cho key URI. Nếu cần, thêm logic ở đây.
                         return trimmedLine.replace(uriMatch[0], `URI="${resolvedUrl}"`);
                     }
                 } 
-                // Xử lý các dòng là URL segment (không phải comment/tag)
-                else if (!trimmedLine.startsWith('#')) {
+                else if (!trimmedLine.startsWith('#')) { // URL segment
                     if (trimmedLine.startsWith('http://') || trimmedLine.startsWith('https://')) {
-                        resolvedUrl = trimmedLine; // Đã tuyệt đối
+                        resolvedUrl = trimmedLine;
                     } else {
                         try {
                             resolvedUrl = new url.URL(trimmedLine, actualPlaylistUrlToProcess).href;
@@ -294,31 +297,30 @@ router.get('/link/:base64data', async (req, res) => {
                         }
                     }
 
-                    // **MỚI**: Bọc resolvedUrl qua proxy nếu là link .ts
-                    // Cần kiểm tra kỹ hơn nếu có các định dạng segment khác (.m4s, .mp4, ...)
-                    if (resolvedUrl.includes('.ts')) { // Điều kiện để xác định là TS link
+                    // Bọc proxy cho link .ts
+                    if (resolvedUrl.endsWith('.ts')) { // Hoặc kiểm tra các đuôi file media khác nếu cần
                         try {
                             const encodedOriginalUrl = encodeURIComponent(resolvedUrl);
-                            const encodedClientRef = encodeURIComponent(clientReferer); // clientReferer từ req.query
-                            const proxiedTsUrl = `${PROXY_BASE_URL}?url=${encodedOriginalUrl}&referer=${encodedClientRef}&auth_token=${PROXY_AUTH_TOKEN}`;
-                            // console.log(`[ANIME47][DEBUG] Original TS: ${resolvedUrl} -> Proxied TS: ${proxiedTsUrl}`);
-                            return proxiedTsUrl;
+                            const encodedClientRef = encodeURIComponent(clientReferer); // clientReferer đã được lấy ở đầu route
+                            return `${PROXY_BASE_URL}?url=${encodedOriginalUrl}&referer=${encodedClientRef}&auth_token=${PROXY_AUTH_TOKEN}`;
                         } catch (e) {
                             console.warn(`[ANIME47][WARN] Bước 5: Lỗi khi mã hóa URL cho proxy: ${resolvedUrl}. Lỗi: ${e.message}. Trả về URL đã phân giải.`);
-                            return resolvedUrl; // Fallback về URL đã được làm tuyệt đối
+                            return resolvedUrl;
                         }
                     } else {
-                        // console.log(`[ANIME47][DEBUG] Resolved non-TS segment/line: ${resolvedUrl}`);
-                        return resolvedUrl; // Trả về URL đã làm tuyệt đối nếu không phải .ts
+                        return resolvedUrl;
                     }
                 }
-                return line; // Trả lại dòng gốc cho các trường hợp khác
+                return line;
             }).filter(line => line !== null).join('\n');
             
-            // **MỚI**: Đảm bảo #EXT-X-ENDLIST nếu cần
             const isLiveStream = contentToProcess.toUpperCase().includes("#EXT-X-PLAYLIST-TYPE:LIVE");
             if (!isLiveStream && !modifiedM3u8Content.includes("#EXT-X-ENDLIST")) {
-                modifiedM3u8Content += "\n#EXT-X-ENDLIST";
+                // Kiểm tra kỹ hơn để tránh thêm nhiều lần nếu join('\n') thêm dòng trống
+                const tempContentCheck = modifiedM3u8Content.trim();
+                if (!tempContentCheck.endsWith("#EXT-X-ENDLIST")) {
+                    modifiedM3u8Content = tempContentCheck + "\n#EXT-X-ENDLIST\n";
+                }
                 console.log("[ANIME47][INFO] Bước 5: Đã thêm #EXT-X-ENDLIST vào cuối M3U8 (do không phải LIVE và chưa có).");
             }
 
