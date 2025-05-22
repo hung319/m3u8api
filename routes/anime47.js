@@ -46,14 +46,13 @@ router.get('/link/:base64data', async (req, res) => {
         // Bước 1: Giải mã Base64 -> chuỗi JSON
         let jsonStringFromBase64;
         try {
-             jsonStringFromBase64 = Buffer.from(base64EncodedJson, 'base64').toString('utf8');
-             console.log("[OK] Bước 1: Giải mã Base64 thành công.");
+            jsonStringFromBase64 = Buffer.from(base64EncodedJson, 'base64').toString('utf8');
+            console.log("[OK] Bước 1: Giải mã Base64 thành công.");
         } catch (bufferError) {
-             console.error("[LỖI] Bước 1: Lỗi giải mã Base64:", bufferError);
-             return res.status(400).json({ error: "Invalid Base64 data provided." });
+            console.error("[LỖI] Bước 1: Lỗi giải mã Base64:", bufferError);
+            return res.status(400).json({ error: "Invalid Base64 data provided." });
         }
 
-        // *** THAY ĐỔI QUAN TRỌNG Ở ĐÂY ***
         // Bước 2a: Tự parse chuỗi JSON bằng formatter để lấy đối tượng CipherParams
         let cipherParams;
         try {
@@ -65,64 +64,69 @@ router.get('/link/:base64data', async (req, res) => {
             return res.status(500).json({ error: `Failed to parse input using custom format: ${formatParseError.message}` });
         }
 
-        // Bước 2b: Giải mã AES sử dụng đối tượng CipherParams và key (không cần tùy chọn format nữa)
+        // Bước 2b: Giải mã AES sử dụng đối tượng CipherParams và key
         console.log("[...] Bước 2b: Đang giải mã AES từ CipherParams...");
-        const decryptedBytes = CryptoJS.AES.decrypt(cipherParams, key); // *** Bỏ tùy chọn format ***
+        const decryptedBytes = CryptoJS.AES.decrypt(cipherParams, key); 
 
         const decryptedJsonString = decryptedBytes.toString(CryptoJS.enc.Utf8);
 
         if (!decryptedJsonString && decryptedBytes.sigBytes > 0) {
-             console.error("[LỖI] Bước 2b: Giải mã AES thất bại (có thể sai key).");
-             return res.status(500).json({ error: "AES decryption failed, please check key." });
+            console.error("[LỖI] Bước 2b: Giải mã AES thất bại (có thể sai key).");
+            return res.status(500).json({ error: "AES decryption failed, please check key." });
         } else if (!decryptedJsonString) {
-             console.warn("[LỖI] Bước 2b: Giải mã thành công nhưng kết quả rỗng.");
-             return res.status(500).json({ error: "Decryption resulted in empty data. Check input." });
+            console.warn("[LỖI] Bước 2b: Giải mã thành công nhưng kết quả rỗng.");
+            return res.status(500).json({ error: "Decryption resulted in empty data. Check input." });
         }
-         console.log(`[OK] Bước 2b: Giải mã AES thành công. Kết quả chuỗi: ${decryptedJsonString}`);
+        console.log(`[OK] Bước 2b: Giải mã AES thành công. Kết quả chuỗi: ${decryptedJsonString}`);
 
-        // Bước 3: Parse JSON string -> Master Playlist URL (Link 1) - Giữ nguyên logic này
+        // Bước 3: Parse JSON string -> Master Playlist URL (Link 1)
         let masterPlaylistUrl;
         try {
             masterPlaylistUrl = JSON.parse(decryptedJsonString);
             if (typeof masterPlaylistUrl !== 'string' || !masterPlaylistUrl.startsWith('http')) {
-                 throw new Error('Dữ liệu giải mã không phải là chuỗi URL hợp lệ.');
+                throw new Error('Dữ liệu giải mã không phải là chuỗi URL hợp lệ.');
             }
-            console.log(`[OK] Bước 3: Parse JSON thành công. Master Playlist URL: ${masterPlaylistUrl}`);
+            console.log(`[OK] Bước 3: Parse JSON thành công. Master Playlist URL (Link 1): ${masterPlaylistUrl}`);
         } catch (parseError) {
-             if (typeof decryptedJsonString === 'string' && decryptedJsonString.startsWith('http')) {
-                 console.warn(`[WARN] Bước 3: Không parse được JSON, dùng chuỗi giải mã gốc làm URL master: ${decryptedJsonString}`);
-                 masterPlaylistUrl = decryptedJsonString;
-             } else {
+            if (typeof decryptedJsonString === 'string' && decryptedJsonString.startsWith('http')) {
+                console.warn(`[WARN] Bước 3: Không parse được JSON, dùng chuỗi giải mã gốc làm URL master: ${decryptedJsonString}`);
+                masterPlaylistUrl = decryptedJsonString; // Sử dụng trực tiếp chuỗi nếu nó là URL
+            } else {
                 console.error("[LỖI] Bước 3: Dữ liệu giải mã không thể diễn giải thành URL:", parseError.message);
                 return res.status(500).json({ error: "Decrypted data could not be interpreted as a valid URL." });
-             }
+            }
         }
 
-        // Các bước 4, 5, 6, 7 (tải, phân tích m3u8, tạo link cuối) giữ nguyên như trước
-        // ... (code từ bước 4 đến 7 của phiên bản trước) ...
-         // Step 4: Fetch the content of the Master Playlist URL
+        // === THAY ĐỔI CHÍNH: TRẢ VỀ MASTER PLAYLIST URL (LINK 1) ===
+        console.log("[OK] Hoàn tất: Trả về Master Playlist URL (Link 1).");
+        res.status(200).json({ masterPlaylistUrl: masterPlaylistUrl }); // Trả về Link 1
+
+        /*
+        // --- CÁC BƯỚC 4, 5, 6 KHÔNG CẦN THIẾT NỮA CHO YÊU CẦU NÀY ---
+        
+        // Step 4: Fetch the content of the Master Playlist URL
         let m3u8Content;
         try {
             console.log(`[...] Bước 4: Đang tải master playlist từ: ${masterPlaylistUrl}`);
             const response = await axios.get(masterPlaylistUrl, {
-                 timeout: 15000 ,
-                 headers: {
-                     'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S711B Build/UP1A.231005.007) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.7049.111 Mobile Safari/537.36',
-                     'Referer': 'https://anime47.lat/'
-                 }
+                timeout: 15000 ,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S711B Build/UP1A.231005.007) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.7049.111 Mobile Safari/537.36',
+                    'Referer': 'https://anime47.lat/'
+                }
             });
             m3u8Content = response.data;
             if (typeof m3u8Content !== 'string') {
-                 console.error("[LỖI] Bước 4: Dữ liệu tải về không phải dạng chuỗi.", typeof m3u8Content);
-                 throw new Error('Response data is not a string.');
+                console.error("[LỖI] Bước 4: Dữ liệu tải về không phải dạng chuỗi.", typeof m3u8Content);
+                throw new Error('Response data is not a string.');
             }
-             if (!m3u8Content.includes('#EXTM3U')) {
-                 console.warn("[WARN] Bước 4: Dữ liệu tải về có vẻ không phải M3U8 (thiếu #EXTM3U).");
+            if (!m3u8Content.includes('#EXTM3U')) {
+                console.warn("[WARN] Bước 4: Dữ liệu tải về có vẻ không phải M3U8 (thiếu #EXTM3U).");
             }
             console.log("[OK] Bước 4: Đã tải xong nội dung M3U8.");
-            console.log("--- Nội dung M3U8 (vài dòng đầu) ---");
-            console.log(m3u8Content.split('\n').slice(0, 5).join('\n'));
-            console.log("--- Kết thúc nội dung M3U8 ---");
+            // console.log("--- Nội dung M3U8 (vài dòng đầu) ---");
+            // console.log(m3u8Content.split('\n').slice(0, 5).join('\n'));
+            // console.log("--- Kết thúc nội dung M3U8 ---");
 
         } catch (fetchError) {
             console.error(`[LỖI] Bước 4: Lỗi khi tải master playlist (${masterPlaylistUrl}):`, fetchError.response?.status, fetchError.message);
@@ -147,7 +151,7 @@ router.get('/link/:base64data', async (req, res) => {
 
         if (!streamUrlPath) {
             console.error("[LỖI] Bước 5: Không tìm thấy đường dẫn stream trong nội dung M3U8.");
-             console.error("Nội dung M3U8 đầy đủ:\n", m3u8Content);
+            // console.error("Nội dung M3U8 đầy đủ:\n", m3u8Content); // Có thể log ra nếu cần debug sâu
             return res.status(500).json({ error: "Could not parse stream URL path from the master playlist." });
         }
 
@@ -155,17 +159,17 @@ router.get('/link/:base64data', async (req, res) => {
         let finalStreamUrl;
         console.log("[...] Bước 6: Đang tạo URL cuối cùng...");
         try {
-             finalStreamUrl = new url.URL(streamUrlPath, masterPlaylistUrl).href;
-             console.log(`[OK] Bước 6: URL cuối cùng được tạo: ${finalStreamUrl}`);
+            finalStreamUrl = new url.URL(streamUrlPath, masterPlaylistUrl).href;
+            console.log(`[OK] Bước 6: URL cuối cùng được tạo: ${finalStreamUrl}`);
         } catch (urlError) {
-             console.error("[LỖI] Bước 6: Lỗi khi tạo URL cuối cùng:", urlError);
-             return res.status(500).json({ error: "Could not construct final stream URL." });
+            console.error("[LỖI] Bước 6: Lỗi khi tạo URL cuối cùng:", urlError);
+            return res.status(500).json({ error: "Could not construct final stream URL." });
         }
 
-        // Step 7: Send response
-        console.log("[OK] Bước 7: Gửi phản hồi JSON.");
-        res.status(200).json({ decryptedResult: finalStreamUrl });
-
+        // Step 7: Send response (ORIGINAL - NOW COMMENTED OUT)
+        // console.log("[OK] Bước 7: Gửi phản hồi JSON.");
+        // res.status(200).json({ decryptedResult: finalStreamUrl });
+        */
 
     } catch (error) {
         console.error(`[LỖI] Lỗi chung khi xử lý /link/${req.params.base64data}:`, error);
