@@ -1,53 +1,49 @@
 const express = require('express');
 const crypto = require('crypto');
 const zlib = require('zlib');
-const fs = require('fs'); // <<< KHÔI PHỤC LẠI
-const fsp = fs.promises; // <<< KHÔI PHỤC LẠI
-const path = require('path');
 const { Buffer } = require('buffer');
 const axios = require('axios');
-// const NodeCache = require('node-cache'); // <<< BỎ ĐI
+const NodeCache = require('node-cache'); // <<< THAY ĐỔI: Import node-cache
+
+// const fs = require('fs'); // <<< BỎ ĐI
+// const fsp = fs.promises; // <<< BỎ ĐI
+// const path = require('path'); // <<< BỎ ĐI
 
 const router = express.Router();
 
 // --- CẤU HÌNH ---
-const TEMP_DIR_NAME = 'temp_m3u8'; // <<< KHÔI PHỤC LẠI
-const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME); // <<< KHÔI PHỤC LẠI
-const FILE_EXPIRATION_MS = 12 * 60 * 60 * 1000; // 12 giờ
+// const TEMP_DIR_NAME = 'temp_m3u8'; // <<< BỎ ĐI
+// const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME); // <<< BỎ ĐI
+const M3U8_CACHE_TTL_SECONDS = 12 * 60 * 60; // 12 giờ, tính bằng giây cho node-cache
 const PROXY_URL_BASE = 'https://prxclf.013666.xyz/';
 
-// const m3u8Cache = new NodeCache(...); // <<< BỎ ĐI
-// console.log('[AnimeVietsub] M3U8 In-memory Cache đã được khởi tạo.'); // <<< BỎ ĐI
+// --- KHỞI TẠO CACHE ---
+// Thay thế hoàn toàn logic file system bằng in-memory cache
+const m3u8Cache = new NodeCache({
+    stdTTL: M3U8_CACHE_TTL_SECONDS,    // Thời gian sống mặc định của một key (tính bằng giây)
+    checkperiod: 600,                 // Cứ mỗi 10 phút, cache sẽ tự động dọn dẹp các key đã hết hạn
+    useClones: false                  // Tăng hiệu suất bằng cách trả về tham chiếu trực tiếp
+});
+console.log('[AnimeVietsub] M3U8 In-memory Cache đã được khởi tạo.');
 
-// --- TỰ ĐỘNG TẠO THƯ MỤC TẠM ---
-if (!fs.existsSync(TEMP_DIR_PATH)) { // <<< KHÔI PHỤC LẠI LOGIC NÀY
-    try {
-        fs.mkdirSync(TEMP_DIR_PATH, { recursive: true });
-        console.log(`[AnimeVietsub] Đã tự động tạo thư mục tạm: ${TEMP_DIR_PATH}`);
-    } catch (err) {
-        console.error(`[AnimeVietsub] Lỗi nghiêm trọng khi tạo thư mục tạm tại ${TEMP_DIR_PATH}. Lỗi: ${err}`);
-        process.exit(1);
-    }
-} else {
-     console.log(`[AnimeVietsub] Thư mục tạm đã tồn tại: ${TEMP_DIR_PATH}`);
-}
+// --- Logic tạo thư mục tạm không còn cần thiết nữa ---
 
 const key_string_b64 = "ZG1fdGhhbmdfc3VjX3ZhdF9nZXRfbGlua19hbl9kYnQ=";
 let aes_key_bytes = null;
 
 function calculateAesKey() {
-     if (!aes_key_bytes) {
-         try {
-             const decoded_key_bytes = Buffer.from(key_string_b64, 'base64');
-             const sha256Hasher = crypto.createHash('sha256');
-             sha256Hasher.update(decoded_key_bytes);
-             aes_key_bytes = sha256Hasher.digest();
-             console.log('[AnimeVietsub] Khóa AES đã được tính toán.');
-         } catch(e) {
-             console.error('[AnimeVietsub] Không thể tính toán khóa AES:', e);
-             throw new Error('Lỗi cấu hình khóa AES.');
-         }
-     }
+    if (!aes_key_bytes) {
+        try {
+            const decoded_key_bytes = Buffer.from(key_string_b64, 'base64');
+            const sha256Hasher = crypto.createHash('sha256');
+            sha256Hasher.update(decoded_key_bytes);
+            aes_key_bytes = sha256Hasher.digest();
+            console.log('[AnimeVietsub] Khóa AES đã được tính toán.');
+        } catch(e) {
+            console.error('[AnimeVietsub] Không thể tính toán khóa AES:', e);
+            throw new Error('Lỗi cấu hình khóa AES.');
+        }
+    }
 }
 calculateAesKey();
 
@@ -110,20 +106,14 @@ router.post('/decrypt', async (req, res) => {
         });
         m3u8Content = processedLines.join('\n');
 
-        const randomFilename = `${crypto.randomBytes(16).toString('hex')}.m3u8`;
-        const filePath = path.join(TEMP_DIR_PATH, randomFilename); // <<< KHÔI PHỤC LẠI filePath
-        const publicM3u8Url = `${requestScheme}://${requestHost}/animevietsub/files/${randomFilename}`;
+        // THAY ĐỔI: Thay vì tạo file, tạo một cache key và lưu vào node-cache
+        const cacheKey = `${crypto.randomBytes(16).toString('hex')}.m3u8`;
+        m3u8Cache.set(cacheKey, m3u8Content); // Tự động hết hạn sau stdTTL
 
-        // Ghi file M3U8 ra đĩa
-        await fsp.writeFile(filePath, m3u8Content, 'utf8'); // <<< KHÔI PHỤC LẠI việc ghi file
-        // console.log(`[AnimeVietsub] Đã lưu M3U8 vào đĩa: ${filePath}`); // Giảm log
+        // THAY ĐỔI: URL công khai giờ sẽ trỏ đến route mới /m3u8/:cacheKey
+        const publicM3u8Url = `${requestScheme}://${requestHost}/animevietsub/m3u8/${cacheKey}`;
 
-        // Tự động xóa file sau khi hết hạn
-        setTimeout(() => { // <<< KHÔI PHỤC LẠI setTimeout để xóa file
-            fsp.unlink(filePath)
-                .then(() => { /* console.log(`[AnimeVietsub] Đã tự động xóa file M3U8 hết hạn: ${filePath}`); */ }) // Giảm log
-                .catch(unlinkErr => console.error(`[AnimeVietsub] Lỗi khi tự động xóa file ${filePath}:`, unlinkErr));
-        }, FILE_EXPIRATION_MS);
+        // THAY ĐỔI: Không cần setTimeout để xóa file nữa, node-cache sẽ tự động làm việc đó.
 
         res.status(200).type('text/plain; charset=utf-8').send(publicM3u8Url);
 
@@ -133,37 +123,28 @@ router.post('/decrypt', async (req, res) => {
     }
 });
 
-router.get('/files/:filename', async (req, res) => {
-    const requestedFilename = path.basename(req.params.filename || '');
-    const filePath = path.join(TEMP_DIR_PATH, requestedFilename); // <<< KHÔI PHỤC LẠI filePath
+// THAY ĐỔI: Route mới để phục vụ M3U8 từ cache, thay thế cho '/files/:filename'
+router.get('/m3u8/:cacheKey', (req, res) => {
+    const { cacheKey } = req.params;
 
-    if (!/^[a-f0-9]{32}\.m3u8$/.test(requestedFilename)) {
-        console.warn(`[AnimeVietsub] Tên file M3U8 không hợp lệ (format): ${requestedFilename}`);
-        return res.status(400).type('text/plain; charset=utf-8').send('Bad request: Invalid filename format.');
+    // Giữ lại validation để đảm bảo an toàn
+    if (!/^[a-f0-9]{32}\.m3u8$/.test(cacheKey)) {
+        console.warn(`[AnimeVietsub] Yêu cầu M3U8 với key không hợp lệ (format): ${cacheKey}`);
+        return res.status(400).type('text/plain; charset=utf-8').send('Bad request: Invalid key format.');
     }
 
-    try {
-        // Kiểm tra file tồn tại và có quyền đọc
-        await fsp.access(filePath, fs.constants.R_OK); // <<< KHÔI PHỤC LẠI access check
-        // console.log(`[AnimeVietsub] Phục vụ M3U8 từ đĩa: ${filePath}`); // Giảm log
-        res.status(200).sendFile(filePath, { // <<< KHÔI PHỤC LẠI sendFile
-            headers: {
-                'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
-                'Access-Control-Allow-Origin': '*'
-            }
-        }, (err) => {
-            if (err) {
-                console.error(`[AnimeVietsub] Lỗi khi gửi file M3U8 ${filePath}:`, err);
-                if (!res.headersSent) {
-                    res.status(err.status || 500).send('Lỗi khi gửi file M3U8.');
-                }
-            } else {
-                // console.log(`[AnimeVietsub] Đã gửi xong file M3U8: ${filePath}`); // Giảm log
-            }
-        });
-    } catch (error) {
-        console.warn(`[AnimeVietsub] M3U8 không tìm thấy trên đĩa hoặc không đọc được: ${filePath}`);
-        res.status(404).type('text/plain; charset=utf-8').send('File M3U8 not found or expired.');
+    // Lấy nội dung M3U8 từ cache
+    const m3u8Content = m3u8Cache.get(cacheKey);
+
+    if (m3u8Content) {
+        // Tìm thấy trong cache -> gửi nội dung về cho client
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.status(200).send(m3u8Content);
+    } else {
+        // Không tìm thấy (hoặc đã hết hạn) -> báo lỗi 404
+        console.warn(`[AnimeVietsub] Không tìm thấy M3U8 trong cache hoặc đã hết hạn với key: ${cacheKey}`);
+        res.status(404).type('text/plain; charset=utf-8').send('M3U8 not found or expired.');
     }
 });
 
