@@ -3,31 +3,24 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { Buffer } = require('buffer');
 const axios = require('axios');
-const NodeCache = require('node-cache'); // <<< THAY ĐỔI: Import node-cache
-
-// const fs = require('fs'); // <<< BỎ ĐI
-// const fsp = fs.promises; // <<< BỎ ĐI
-// const path = require('path'); // <<< BỎ ĐI
+const NodeCache = require('node-cache');
 
 const router = express.Router();
 
 // --- CẤU HÌNH ---
-// const TEMP_DIR_NAME = 'temp_m3u8'; // <<< BỎ ĐI
-// const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME); // <<< BỎ ĐI
-const M3U8_CACHE_TTL_SECONDS = 12 * 60 * 60; // 12 giờ, tính bằng giây cho node-cache
-const PROXY_URL_BASE = 'https://prxclf.013666.xyz/';
+const M3U8_CACHE_TTL_SECONDS = 12 * 60 * 60; // 12 giờ
+// <<< THAY ĐỔI: Cập nhật URL base của proxy mới
+const PROXY_URL_BASE = 'https://cffi-prx.013666.xyz/api'; 
 
 // --- KHỞI TẠO CACHE ---
-// Thay thế hoàn toàn logic file system bằng in-memory cache
 const m3u8Cache = new NodeCache({
-    stdTTL: M3U8_CACHE_TTL_SECONDS,    // Thời gian sống mặc định của một key (tính bằng giây)
-    checkperiod: 600,                 // Cứ mỗi 10 phút, cache sẽ tự động dọn dẹp các key đã hết hạn
-    useClones: false                  // Tăng hiệu suất bằng cách trả về tham chiếu trực tiếp
+    stdTTL: M3U8_CACHE_TTL_SECONDS,
+    checkperiod: 600,
+    useClones: false
 });
 console.log('[AnimeVietsub] M3U8 In-memory Cache đã được khởi tạo.');
 
-// --- Logic tạo thư mục tạm không còn cần thiết nữa ---
-
+// --- LOGIC GIẢI MÃ (Không thay đổi) ---
 const key_string_b64 = "ZG1fdGhhbmdfc3VjX3ZhdF9nZXRfbGlua19hbl9kYnQ=";
 let aes_key_bytes = null;
 
@@ -72,6 +65,8 @@ function decryptAndDecompress(encrypted_data_string_b64) {
     }
 }
 
+// --- ROUTES (Chỉ thay đổi ở /segment_proxy) ---
+
 router.use('/decrypt', express.text({ type: '*/*' }));
 
 router.post('/decrypt', async (req, res) => {
@@ -106,15 +101,10 @@ router.post('/decrypt', async (req, res) => {
         });
         m3u8Content = processedLines.join('\n');
 
-        // THAY ĐỔI: Thay vì tạo file, tạo một cache key và lưu vào node-cache
         const cacheKey = `${crypto.randomBytes(16).toString('hex')}.m3u8`;
-        m3u8Cache.set(cacheKey, m3u8Content); // Tự động hết hạn sau stdTTL
+        m3u8Cache.set(cacheKey, m3u8Content);
 
-        // THAY ĐỔI: URL công khai giờ sẽ trỏ đến route mới /m3u8/:cacheKey
         const publicM3u8Url = `${requestScheme}://${requestHost}/animevietsub/m3u8/${cacheKey}`;
-
-        // THAY ĐỔI: Không cần setTimeout để xóa file nữa, node-cache sẽ tự động làm việc đó.
-
         res.status(200).type('text/plain; charset=utf-8').send(publicM3u8Url);
 
     } catch (error) {
@@ -123,32 +113,27 @@ router.post('/decrypt', async (req, res) => {
     }
 });
 
-// THAY ĐỔI: Route mới để phục vụ M3U8 từ cache, thay thế cho '/files/:filename'
 router.get('/m3u8/:cacheKey', (req, res) => {
     const { cacheKey } = req.params;
 
-    // Giữ lại validation để đảm bảo an toàn
     if (!/^[a-f0-9]{32}\.m3u8$/.test(cacheKey)) {
         console.warn(`[AnimeVietsub] Yêu cầu M3U8 với key không hợp lệ (format): ${cacheKey}`);
         return res.status(400).type('text/plain; charset=utf-8').send('Bad request: Invalid key format.');
     }
 
-    // Lấy nội dung M3U8 từ cache
     const m3u8Content = m3u8Cache.get(cacheKey);
 
     if (m3u8Content) {
-        // Tìm thấy trong cache -> gửi nội dung về cho client
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.status(200).send(m3u8Content);
     } else {
-        // Không tìm thấy (hoặc đã hết hạn) -> báo lỗi 404
         console.warn(`[AnimeVietsub] Không tìm thấy M3U8 trong cache hoặc đã hết hạn với key: ${cacheKey}`);
         res.status(404).type('text/plain; charset=utf-8').send('M3U8 not found or expired.');
     }
 });
 
-// Endpoint /segment_proxy giữ nguyên logic như trước (đã giảm log)
+// <<< THAY ĐỔI: Toàn bộ logic trong endpoint này được cập nhật để phù hợp với proxy mới
 router.get('/segment_proxy', async (req, res) => {
     const { targetUrl, targetReferer } = req.query;
 
@@ -163,7 +148,8 @@ router.get('/segment_proxy', async (req, res) => {
         return res.status(500).send('Server Configuration Error: Proxy API key missing.');
     }
 
-    const finalExternalProxyUrl = `${PROXY_URL_BASE}?url=${encodeURIComponent(targetUrl)}&referer=${encodeURIComponent(targetReferer || '')}&auth_token=${apiKey}`;
+    // <<< THAY ĐỔI: Xây dựng URL theo cấu trúc mới: ...?key=...&url=...&referer=...
+    const finalExternalProxyUrl = `${PROXY_URL_BASE}?key=${apiKey}&url=${encodeURIComponent(targetUrl)}&referer=${encodeURIComponent(targetReferer || '')}`;
     
     try {
         const proxyResponse = await axios({
