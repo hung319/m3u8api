@@ -163,7 +163,7 @@ router.get('/segment_proxy', async (req, res) => {
         return res.status(500).send('Server Configuration Error: Proxy API key missing.');
     }
 
-    const finalExternalProxyUrl = `${PROXY_URL_BASE}?url=${encodeURIComponent(targetUrl)}&referer=${encodeURIComponent(targetReferer || '')}&auth_token=${apiKey}`;
+    const finalExternalProxyUrl = `${PROXY_URL_BASE}?url=${encodeURIComponent(targetUrl)}&referer=${encodeURIComponent(targetReferer || '')}&key=${apiKey}`;
     
     try {
         const proxyResponse = await axios({
