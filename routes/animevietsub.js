@@ -3,22 +3,34 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { Buffer } = require('buffer');
 const axios = require('axios');
-const FormData = require('form-data'); // <<< THAY ĐỔI: Import form-data
+const NodeCache = require('node-cache'); // <<< THAY ĐỔI: Import node-cache
 
-// --- Bỏ hoàn toàn logic và import của node-cache ---
-// const NodeCache = require('node-cache');
-// const m3u8Cache = new NodeCache(...)
+// const fs = require('fs'); // <<< BỎ ĐI
+// const fsp = fs.promises; // <<< BỎ ĐI
+// const path = require('path'); // <<< BỎ ĐI
 
 const router = express.Router();
 
 // --- CẤU HÌNH ---
+// const TEMP_DIR_NAME = 'temp_m3u8'; // <<< BỎ ĐI
+// const TEMP_DIR_PATH = path.join(__dirname, '..', TEMP_DIR_NAME); // <<< BỎ ĐI
+const M3U8_CACHE_TTL_SECONDS = 12 * 60 * 60; // 12 giờ, tính bằng giây cho node-cache
 const PROXY_URL_BASE = 'https://prxclf.013666.xyz/';
-const DPASTE_API_URL = 'https://dpaste.org/api/'; // <<< THAY ĐỔI: Thêm URL API của dpaste
+
+// --- KHỞI TẠO CACHE ---
+// Thay thế hoàn toàn logic file system bằng in-memory cache
+const m3u8Cache = new NodeCache({
+    stdTTL: M3U8_CACHE_TTL_SECONDS,    // Thời gian sống mặc định của một key (tính bằng giây)
+    checkperiod: 600,                 // Cứ mỗi 10 phút, cache sẽ tự động dọn dẹp các key đã hết hạn
+    useClones: false                  // Tăng hiệu suất bằng cách trả về tham chiếu trực tiếp
+});
+console.log('[AnimeVietsub] M3U8 In-memory Cache đã được khởi tạo.');
+
+// --- Logic tạo thư mục tạm không còn cần thiết nữa ---
 
 const key_string_b64 = "ZG1fdGhhbmdfc3VjX3ZhdF9nZXRfbGlua19hbl9kYnQ=";
 let aes_key_bytes = null;
 
-// Hàm calculateAesKey không thay đổi
 function calculateAesKey() {
     if (!aes_key_bytes) {
         try {
@@ -35,7 +47,6 @@ function calculateAesKey() {
 }
 calculateAesKey();
 
-// Hàm decryptAndDecompress không thay đổi
 function decryptAndDecompress(encrypted_data_string_b64) {
     if (!aes_key_bytes) {
         throw new Error('Khóa AES chưa được khởi tạo.');
@@ -63,7 +74,6 @@ function decryptAndDecompress(encrypted_data_string_b64) {
 
 router.use('/decrypt', express.text({ type: '*/*' }));
 
-// <<< THAY ĐỔI LỚN: Logic trong router.post('/decrypt')
 router.post('/decrypt', async (req, res) => {
     const encryptedDataString = req.body;
 
@@ -79,7 +89,6 @@ router.post('/decrypt', async (req, res) => {
     }
 
     try {
-        // Bước 1 & 2: Giải mã và xử lý M3U8 (giữ nguyên)
         let m3u8Content = decryptAndDecompress(encryptedDataString);
         const initialReferer = req.headers.referer || '';
         const requestScheme = req.protocol;
@@ -97,52 +106,50 @@ router.post('/decrypt', async (req, res) => {
         });
         m3u8Content = processedLines.join('\n');
 
-        // <<< THAY ĐỔI: Bước 3 - Upload nội dung M3U8 lên dpaste.org
-        console.log('[AnimeVietsub] Đang upload M3U8 lên dpaste.org...');
-        const form = new FormData();
-        form.append('content', m3u8Content);
-        form.append('syntax', 'text');
-        form.append('expiry_days', '1');
+        // THAY ĐỔI: Thay vì tạo file, tạo một cache key và lưu vào node-cache
+        const cacheKey = `${crypto.randomBytes(16).toString('hex')}.m3u8`;
+        m3u8Cache.set(cacheKey, m3u8Content); // Tự động hết hạn sau stdTTL
 
-        const dpasteResponse = await axios.post(DPASTE_API_URL, form, {
-            headers: form.getHeaders(), // Quan trọng: axios cần header này để gửi form data
-            timeout: 15000 // Thêm timeout cho request
-        });
+        // THAY ĐỔI: URL công khai giờ sẽ trỏ đến route mới /m3u8/:cacheKey
+        const publicM3u8Url = `${requestScheme}://${requestHost}/animevietsub/m3u8/${cacheKey}`;
 
-        const dpasteUrl = dpasteResponse.data.trim();
-        if (!dpasteUrl.startsWith('https://dpaste.org/')) {
-             throw new Error('Phản hồi từ dpaste.org không hợp lệ.');
-        }
+        // THAY ĐỔI: Không cần setTimeout để xóa file nữa, node-cache sẽ tự động làm việc đó.
 
-        const publicM3u8Url = `${dpasteUrl}/raw`; // Thêm /raw vào cuối
-        
-        console.log(`[AnimeVietsub] Đã upload thành công. URL: ${publicM3u8Url}`);
-
-        // Bước 4: Gửi lại link raw cho người dùng
         res.status(200).type('text/plain; charset=utf-8').send(publicM3u8Url);
 
     } catch (error) {
-        let errorMessage = `Lỗi Server Nội Bộ: ${error.message}`;
-        if (error.isAxiosError) {
-             console.error("[AnimeVietsub] Lỗi khi gọi đến dpaste.org:", error.message);
-             errorMessage = "Lỗi: Không thể upload M3U8 lên dịch vụ bên ngoài.";
-        } else {
-             console.error("[AnimeVietsub] Lỗi xử lý chính tại /decrypt:", error.message, error.stack);
-        }
-        res.status(500).type('text/plain; charset=utf-8').send(errorMessage);
+        console.error("[AnimeVietsub] Lỗi xử lý chính tại /decrypt:", error.message, error.stack);
+        res.status(500).type('text/plain; charset=utf-8').send(`Lỗi Server Nội Bộ: ${error.message}`);
     }
 });
 
-// <<< THAY ĐỔI: Xóa hoàn toàn route GET /m3u8/:cacheKey vì không còn cần thiết
-/*
+// THAY ĐỔI: Route mới để phục vụ M3U8 từ cache, thay thế cho '/files/:filename'
 router.get('/m3u8/:cacheKey', (req, res) => {
-    // ...
-});
-*/
+    const { cacheKey } = req.params;
 
-// Endpoint /segment_proxy giữ nguyên logic như trước
+    // Giữ lại validation để đảm bảo an toàn
+    if (!/^[a-f0-9]{32}\.m3u8$/.test(cacheKey)) {
+        console.warn(`[AnimeVietsub] Yêu cầu M3U8 với key không hợp lệ (format): ${cacheKey}`);
+        return res.status(400).type('text/plain; charset=utf-8').send('Bad request: Invalid key format.');
+    }
+
+    // Lấy nội dung M3U8 từ cache
+    const m3u8Content = m3u8Cache.get(cacheKey);
+
+    if (m3u8Content) {
+        // Tìm thấy trong cache -> gửi nội dung về cho client
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.status(200).send(m3u8Content);
+    } else {
+        // Không tìm thấy (hoặc đã hết hạn) -> báo lỗi 404
+        console.warn(`[AnimeVietsub] Không tìm thấy M3U8 trong cache hoặc đã hết hạn với key: ${cacheKey}`);
+        res.status(404).type('text/plain; charset=utf-8').send('M3U8 not found or expired.');
+    }
+});
+
+// Endpoint /segment_proxy giữ nguyên logic như trước (đã giảm log)
 router.get('/segment_proxy', async (req, res) => {
-    // ... (Toàn bộ code của segment_proxy không thay đổi)
     const { targetUrl, targetReferer } = req.query;
 
     if (!targetUrl) {
