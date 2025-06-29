@@ -1,9 +1,9 @@
-const express = require('express');
-const crypto = require('crypto');
-const zlib = require('zlib');
-const { Buffer } = require('buffer');
-const NodeCache = require('node-cache');
-const { gotScraping } = require('got-scraping'); // <<< THÊM: Import got-scraping
+import express from 'express';
+import crypto from 'crypto'; // Dùng import thay cho require
+import zlib from 'zlib';
+import { Buffer } from 'buffer';
+import NodeCache from 'node-cache';
+import { gotScraping } from 'got-scraping';
 
 const router = express.Router();
 
@@ -169,4 +169,4 @@ router.get('/segment_proxy', async (req, res) => {
     }
 });
 
-module.exports = router;
+export default router;
