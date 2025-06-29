@@ -1,7 +1,8 @@
-const express = require('express');
-const app = express();
-const animevietsubRoutes = require('./routes/animevietsub');
+import express from 'express';
+// Thay đổi: Import route và thêm đuôi .js
+import animevietsubRoutes from './routes/animevietsub.js';
 
+const app = express();
 const PORT = 3000;
 
 // Route mới để thông báo tình trạng máy chủ
