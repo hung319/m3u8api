@@ -11,13 +11,13 @@
   "license": "ISC",
   "description": "Server cho Mahiro cung cấp API anime",
   "dependencies": {
-    "axios": "^1.7.2",         
+    "axios": "^1.7.2",
     "cheerio": "^1.0.0-rc.12",
-    "express": "^4.19.2",       
-    "crypto-js": "^4.2.0",
-    "uuid": "^9.0.1",           
-    "node-cron": "^3.0.3",
     "cors": "^2.8.5",
-    "node-cache": "^5.1.2"
+    "express": "^4.19.2",
+    "got-scraping": "^4.0.4",
+    "node-cache": "^5.1.2",
+    "node-cron": "^3.0.3",
+    "uuid": "^9.0.1"
   }
 }
